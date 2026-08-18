@@ -1,0 +1,135 @@
+import Link from "next/link";
+import { notFound } from "next/navigation";
+import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/dev-user";
+import { TopNav } from "@/components/top-nav";
+
+export default async function CompanyDetailPage({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
+  const { slug } = await params;
+  const user = await getCurrentUser();
+
+  const company = await prisma.company.findUnique({
+    where: { slug },
+    include: {
+      companyType: true,
+      country: true,
+      baseCurrency: true,
+      accountingMethod: true,
+      companyStatus: true,
+      taxFilingFrequency: true,
+      companyUsers: { where: { userId: user.id }, include: { role: true } },
+    },
+  });
+
+  if (!company) notFound();
+
+  const myMembership = company.companyUsers[0];
+
+  return (
+    <div className="flex min-h-full flex-col">
+      <TopNav />
+      <main className="mx-auto w-full max-w-2xl flex-1 px-6 py-10">
+        <div className="flex items-start justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <h1 className="text-2xl font-semibold tracking-tight">
+                {company.name}
+              </h1>
+              <StatusBadge status={company.companyStatus.name} />
+            </div>
+            <p className="mt-1 text-sm text-muted">
+              {company.slug}
+              {myMembership && ` · Your role: ${myMembership.role.name}`}
+            </p>
+          </div>
+          <Link
+            href={`/companies/${company.slug}/edit`}
+            className="rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-background"
+          >
+            Edit
+          </Link>
+        </div>
+
+        <div className="mt-8 space-y-6 rounded-lg border border-border bg-surface p-6">
+          <Row label="Legal name" value={company.legalName} />
+          <Row label="Company type" value={company.companyType.name} />
+          <Row label="Industry" value={company.industry} />
+          <Row label="Tax ID" value={company.taxId} />
+          <Row label="Registration no." value={company.registrationNumber} />
+
+          <hr className="border-border" />
+
+          <Row label="Email" value={company.email} />
+          <Row label="Phone" value={company.phone} />
+          <Row label="Website" value={company.website} />
+          <Row
+            label="Address"
+            value={[company.addressLine, company.city, company.state, company.zip]
+              .filter(Boolean)
+              .join(", ") || null}
+          />
+          <Row label="Country" value={company.country.name} />
+
+          <hr className="border-border" />
+
+          <Row
+            label="Base currency"
+            value={`${company.baseCurrency.name} (${company.baseCurrency.isoCode})`}
+          />
+          <Row
+            label="Fiscal year start"
+            value={monthName(company.fiscalYearStartMonth)}
+          />
+          <Row label="Accounting method" value={company.accountingMethod.name} />
+
+          <hr className="border-border" />
+
+          <Row
+            label="Tax registered"
+            value={company.taxRegistered ? "Yes" : "No"}
+          />
+          {company.taxRegistered && (
+            <Row
+              label="Filing frequency"
+              value={company.taxFilingFrequency?.name ?? "—"}
+            />
+          )}
+        </div>
+      </main>
+    </div>
+  );
+}
+
+function Row({ label, value }: { label: string; value: string | null | undefined }) {
+  return (
+    <div className="flex justify-between gap-4 text-sm">
+      <span className="text-muted">{label}</span>
+      <span className="text-right font-medium text-ink">{value || "—"}</span>
+    </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const isActive = status.toLowerCase() === "active";
+  return (
+    <span
+      className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+        isActive ? "bg-accent-soft text-accent" : "bg-background text-muted"
+      }`}
+    >
+      {status}
+    </span>
+  );
+}
+
+function monthName(n: number) {
+  const names = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December",
+  ];
+  return names[n - 1] ?? String(n);
+}
