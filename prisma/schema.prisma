@@ -1,0 +1,214 @@
+// ============================================================
+// Accounting App — Prisma Schema
+// Layer scope for this pass: Global Users, Companies,
+// Company-User access, and Master (lookup) tables only.
+// No transactional/File tables (invoices, journal entries, etc.) yet.
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // pooled connection (used at runtime)
+  directUrl = env("DIRECT_URL")   // direct connection (used for migrations)
+}
+
+// ============================================================
+// GLOBAL LAYER
+// ============================================================
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  companyUsers     CompanyUser[] @relation("CompanyUserAccount")
+  invitedUsers     CompanyUser[] @relation("CompanyUserInvitedBy")
+
+  @@map("users")
+}
+
+// ============================================================
+// COMPANY (the container / workspace)
+// ============================================================
+
+model Company {
+  id                 String  @id @default(uuid())
+  name               String
+  slug               String  @unique
+  legalName          String?
+  registrationNumber String?
+  taxId              String?
+  industry           String?
+  website            String?
+  email              String?
+  phone              String?
+
+  // Address
+  addressLine String?
+  city        String?
+  state       String?
+  zip         String?
+
+  logoUrl String?
+
+  // Accounting settings
+  fiscalYearStartMonth Int     @default(1) // 1-12
+  decimalPrecision     Int     @default(2)
+
+  // Tax settings
+  taxRegistered        Boolean @default(false)
+  defaultTaxRateId     String?
+
+  // Books control
+  booksLockedUntil DateTime?
+
+  plan String @default("free")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Master table references
+  companyTypeId       String
+  companyType         CompanyType  @relation(fields: [companyTypeId], references: [id])
+
+  countryId           String
+  country              Country      @relation(fields: [countryId], references: [id])
+
+  baseCurrencyId       String
+  baseCurrency         Currency     @relation(fields: [baseCurrencyId], references: [id])
+
+  accountingMethodId   String
+  accountingMethod     AccountingMethod @relation(fields: [accountingMethodId], references: [id])
+
+  taxFilingFrequencyId String?
+  taxFilingFrequency   TaxFilingFrequency? @relation(fields: [taxFilingFrequencyId], references: [id])
+
+  companyStatusId      String
+  companyStatus        CompanyStatus @relation(fields: [companyStatusId], references: [id])
+
+  // Relations
+  companyUsers CompanyUser[]
+
+  @@map("companies")
+}
+
+// ============================================================
+// COMPANY <-> USER ACCESS (multi-tenant backbone)
+// One row per (userId, companyId) — single role per company.
+// ============================================================
+
+model CompanyUser {
+  id        String @id @default(uuid())
+
+  userId    String
+  user      User   @relation("CompanyUserAccount", fields: [userId], references: [id])
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  companyUserRoleId String
+  role              CompanyUserRole @relation(fields: [companyUserRoleId], references: [id])
+
+  isDefault Boolean @default(false)
+
+  invitedById String?
+  invitedBy   User?   @relation("CompanyUserInvitedBy", fields: [invitedById], references: [id])
+
+  joinedAt DateTime @default(now())
+
+  @@unique([userId, companyId]) // enforces: one role per user per company
+  @@map("company_users")
+}
+
+// ============================================================
+// MASTER TABLES (lookup/reference data)
+// ============================================================
+
+model CompanyType {
+  id        String  @id @default(uuid())
+  name      String  // e.g. "Limited Liability Company"
+  code      String  @unique // e.g. "LLC"
+  isActive  Boolean @default(true)
+  sortOrder Int     @default(0)
+
+  companies Company[]
+
+  @@map("master_company_types")
+}
+
+model Country {
+  id       String  @id @default(uuid())
+  name     String  // e.g. "Nepal"
+  isoCode  String  @unique // e.g. "NP"
+  isActive Boolean @default(true)
+
+  companies Company[]
+
+  @@map("master_countries")
+}
+
+model Currency {
+  id            String  @id @default(uuid())
+  name          String  // e.g. "Nepalese Rupee"
+  isoCode       String  @unique // e.g. "NPR"
+  symbol        String  // e.g. "रू"
+  decimalPlaces Int     @default(2)
+  isActive      Boolean @default(true)
+
+  companies Company[]
+
+  @@map("master_currencies")
+}
+
+model AccountingMethod {
+  id          String  @id @default(uuid())
+  name        String  // e.g. "Accrual"
+  code        String  @unique // e.g. "ACCRUAL"
+  description String?
+  isActive    Boolean @default(true)
+
+  companies Company[]
+
+  @@map("master_accounting_methods")
+}
+
+model TaxFilingFrequency {
+  id       String  @id @default(uuid())
+  name     String  // e.g. "Quarterly"
+  code     String  @unique // e.g. "QUARTERLY"
+  isActive Boolean @default(true)
+
+  companies Company[]
+
+  @@map("master_tax_filing_frequencies")
+}
+
+model CompanyStatus {
+  id       String  @id @default(uuid())
+  name     String  // e.g. "Active"
+  code     String  @unique // e.g. "ACTIVE"
+  isActive Boolean @default(true)
+
+  companies Company[]
+
+  @@map("master_company_statuses")
+}
+
+model CompanyUserRole {
+  id       String  @id @default(uuid())
+  name     String  // e.g. "Accountant"
+  code     String  @unique // e.g. "ACCOUNTANT"
+  isActive Boolean @default(true)
+
+  companyUsers CompanyUser[]
+
+  @@map("master_company_user_roles")
+}
