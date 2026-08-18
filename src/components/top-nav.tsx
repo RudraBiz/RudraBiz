@@ -8,9 +8,12 @@ export function TopNav() {
           <span className="inline-block h-6 w-6 rounded bg-accent" />
           <span className="font-semibold tracking-tight">RudraBiz</span>
         </Link>
-        <nav className="text-sm text-muted">
+        <nav className="flex items-center gap-5 text-sm text-muted">
           <Link href="/companies" className="hover:text-ink">
             Companies
+          </Link>
+          <Link href="/settings" className="hover:text-ink">
+            Settings
           </Link>
         </nav>
       </div>
