@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { TopNav } from "@/components/top-nav";
 import {
@@ -26,12 +27,23 @@ export default async function NewCompanyPage() {
     <div className="flex min-h-full flex-col">
       <TopNav />
       <main className="mx-auto w-full max-w-2xl flex-1 px-6 py-10">
-        <h1 className="text-2xl font-semibold tracking-tight">
-          Create your company
-        </h1>
-        <p className="mt-1 text-sm text-muted">
-          This becomes a workspace with its own books, users, and settings.
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">
+              Create your company
+            </h1>
+            <p className="mt-1 text-sm text-muted">
+              This becomes a workspace with its own books, users, and
+              settings.
+            </p>
+          </div>
+          <Link
+            href="/settings"
+            className="shrink-0 whitespace-nowrap text-sm text-accent hover:opacity-80"
+          >
+            Manage dropdown options →
+          </Link>
+        </div>
 
         <form
           action={createCompany}
