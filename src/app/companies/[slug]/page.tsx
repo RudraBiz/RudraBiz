@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
-import { getCurrentUser } from "@/lib/dev-user";
+import { getCurrentUser } from "@/lib/session";
 import { TopNav } from "@/components/top-nav";
 
 export default async function CompanyDetailPage({

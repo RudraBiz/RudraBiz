@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SignOutButton } from "@/components/sign-out-button";
 
 export function TopNav() {
   return (
@@ -15,6 +16,7 @@ export function TopNav() {
           <Link href="/settings" className="hover:text-ink">
             Settings
           </Link>
+          <SignOutButton />
         </nav>
       </div>
     </header>
