@@ -1,5 +1,13 @@
-import { auth } from "@/lib/auth";
+import NextAuth from "next-auth";
 import { NextResponse } from "next/server";
+import { authConfig } from "@/lib/auth.config";
+
+// Middleware runs on the Edge runtime, which cannot bundle Prisma or
+// bcryptjs (they pull in Node built-ins like node:util/types). So this
+// creates a second, edge-safe NextAuth instance from just the shared
+// config — no Credentials provider needed here, since middleware only
+// ever reads the existing JWT, it never needs to run authorize().
+const { auth } = NextAuth(authConfig);
 
 export default auth((req) => {
   const isLoggedIn = !!req.auth;
