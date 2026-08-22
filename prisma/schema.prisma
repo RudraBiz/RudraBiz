@@ -28,17 +28,25 @@ model User {
   // Relations
   companyUsers     CompanyUser[] @relation("CompanyUserAccount")
   invitedUsers     CompanyUser[] @relation("CompanyUserInvitedBy")
-  accounts         Account[]
+  oauthAccounts    OAuthAccount[]
   sessions         Session[]
+  createdJournalEntries JournalEntry[]
 
   @@map("users")
 }
 
 // ============================================================
 // AUTH (NextAuth.js / Auth.js) — Pass 2
+//
+// Named OAuthAccount (not "Account") to avoid colliding with the
+// Chart of Accounts "Account" model added in Pass 4 — both would
+// otherwise map to a table named "accounts". Not currently wired to
+// an adapter (session strategy is JWT, Credentials provider only),
+// so these tables exist but aren't populated by anything yet — this
+// rename is safe.
 // ============================================================
 
-model Account {
+model OAuthAccount {
   id                String  @id @default(uuid())
   userId            String
   type              String
@@ -55,7 +63,7 @@ model Account {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, providerAccountId])
-  @@map("accounts")
+  @@map("oauth_accounts")
 }
 
 model Session {
@@ -131,6 +139,7 @@ model Company {
   // Relations
   companyUsers CompanyUser[]
   accounts     Account[]
+  journalEntries JournalEntry[]
 
   @@map("companies")
 }
@@ -297,6 +306,70 @@ model Account {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
+  journalEntryLines JournalEntryLine[]
+
   @@unique([companyId, code])
   @@map("accounts")
+}
+
+// ============================================================
+// LEDGER CORE (double-entry journal) — Pass 5
+//
+// Journal entries are immutable once created — there's no edit/delete.
+// To correct a mistake, reverse the entry (creates a new entry with
+// debits/credits swapped, linked back to the original). This matches
+// how real double-entry bookkeeping handles corrections: you never
+// rewrite history, you post an offsetting entry.
+// ============================================================
+
+model JournalEntry {
+  id String @id @default(uuid())
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  // Human-readable, sequential per company (e.g. "JE-0001"). Generated
+  // from a per-company count at creation time — see note in actions.ts
+  // about the race condition this implies under concurrent submits.
+  entryNumber String
+
+  entryDate   DateTime
+  description String?
+  reference   String? // e.g. invoice #, check #, external doc reference
+
+  createdById String
+  createdBy   User   @relation(fields: [createdById], references: [id])
+
+  // If this entry reverses another one, this points at the original.
+  // @unique enforces that an original entry can only be reversed once.
+  reversedEntryId String?      @unique
+  reversedEntry   JournalEntry? @relation("JournalEntryReversal", fields: [reversedEntryId], references: [id])
+  reversalEntry   JournalEntry? @relation("JournalEntryReversal")
+
+  createdAt DateTime @default(now())
+
+  lines JournalEntryLine[]
+
+  @@unique([companyId, entryNumber])
+  @@map("journal_entries")
+}
+
+model JournalEntryLine {
+  id String @id @default(uuid())
+
+  journalEntryId String
+  journalEntry   JournalEntry @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+
+  accountId String
+  account   Account @relation(fields: [accountId], references: [id])
+
+  // Exactly one of debit/credit should be > 0, the other 0 — enforced in
+  // application logic (see actions.ts), not a DB constraint.
+  debit  Decimal @default(0) @db.Decimal(18, 2)
+  credit Decimal @default(0) @db.Decimal(18, 2)
+
+  description String?
+  lineOrder   Int     @default(0)
+
+  @@map("journal_entry_lines")
 }
