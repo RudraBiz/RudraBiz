@@ -3,6 +3,8 @@ import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/session";
 import { TopNav } from "@/components/top-nav";
+import { InviteMemberForm } from "@/components/invite-member-form";
+import { ROLE_RANK, type RoleCode } from "@/lib/roles";
 
 export default async function CompanyDetailPage({
   params,
@@ -21,13 +23,17 @@ export default async function CompanyDetailPage({
       accountingMethod: true,
       companyStatus: true,
       taxFilingFrequency: true,
-      companyUsers: { where: { userId: user.id }, include: { role: true } },
+      companyUsers: { include: { role: true, user: true } },
     },
   });
 
   if (!company) notFound();
 
-  const myMembership = company.companyUsers[0];
+  const myMembership = company.companyUsers.find((cu) => cu.userId === user.id);
+  const canManageMembers =
+    !!myMembership &&
+    ROLE_RANK.indexOf(myMembership.role.code as RoleCode) >=
+      ROLE_RANK.indexOf("ADMIN");
 
   return (
     <div className="flex min-h-full flex-col">
@@ -97,6 +103,29 @@ export default async function CompanyDetailPage({
               label="Filing frequency"
               value={company.taxFilingFrequency?.name ?? "—"}
             />
+          )}
+        </div>
+
+        <div className="mt-8 rounded-lg border border-border bg-surface p-6">
+          <h2 className="text-sm font-semibold tracking-tight">Members</h2>
+
+          <ul className="mt-4 divide-y divide-border">
+            {company.companyUsers.map((cu) => (
+              <li key={cu.id} className="flex items-center justify-between py-3 text-sm">
+                <div>
+                  <p className="font-medium">{cu.user.name}</p>
+                  <p className="text-xs text-muted">{cu.user.email}</p>
+                </div>
+                <span className="text-xs text-muted">{cu.role.name}</span>
+              </li>
+            ))}
+          </ul>
+
+          {canManageMembers && (
+            <div className="mt-5 border-t border-border pt-5">
+              <p className="mb-3 text-sm font-medium">Add a member</p>
+              <InviteMemberForm companyId={company.id} />
+            </div>
           )}
         </div>
       </main>

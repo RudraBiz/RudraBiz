@@ -3,6 +3,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { getDelegate, getTableConfig } from "@/lib/master-tables";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/session";
+import { getRoleId } from "@/lib/roles";
+import { requireRole, ForbiddenError } from "@/lib/permissions";
 
 function buildData(table: string, formData: FormData) {
   const config = getTableConfig(table);
@@ -51,13 +54,21 @@ export async function toggleActive(table: string, id: string, nextIsActive: bool
 }
 
 export async function createCompany(formData: FormData) {
+  const user = await getCurrentUser();
+
   const name = String(formData.get("name") ?? "").trim();
   if (!name) throw new Error("Company name is required");
 
   const slug = await uniqueSlug(name);
   const activeStatusId = await getStatusId("ACTIVE");
+  const ownerRoleId = await getRoleId("OWNER");
 
-  await prisma.company.create({
+  // First company for this user becomes their default — later companies don't.
+  const existingMembershipCount = await prisma.companyUser.count({
+    where: { userId: user.id },
+  });
+
+  const company = await prisma.company.create({
     data: {
       slug,
       name,
@@ -87,11 +98,29 @@ export async function createCompany(formData: FormData) {
     },
   });
 
+  // The creator must be linked as a member, or the company they just made
+  // would never show up in their own /companies list.
+  await prisma.companyUser.create({
+    data: {
+      userId: user.id,
+      companyId: company.id,
+      companyUserRoleId: ownerRoleId,
+      isDefault: existingMembershipCount === 0,
+    },
+  });
+
   revalidatePath("/", "layout");
   redirect(`/companies/${slug}`);
 }
 
 export async function updateCompany(slug: string, formData: FormData) {
+  const user = await getCurrentUser();
+
+  const company = await prisma.company.findUnique({ where: { slug } });
+  if (!company) throw new Error("Company not found");
+
+  await requireRole(user.id, company.id, "ADMIN");
+
   await prisma.company.update({
     where: { slug },
     data: {
@@ -125,6 +154,13 @@ export async function updateCompany(slug: string, formData: FormData) {
 }
 
 export async function archiveCompany(slug: string) {
+  const user = await getCurrentUser();
+
+  const company = await prisma.company.findUnique({ where: { slug } });
+  if (!company) throw new Error("Company not found");
+
+  await requireRole(user.id, company.id, "OWNER");
+
   const archivedStatusId = await getStatusId("ARCHIVED");
 
   await prisma.company.update({
@@ -134,6 +170,62 @@ export async function archiveCompany(slug: string) {
 
   revalidatePath("/", "layout");
   redirect("/companies");
+}
+
+/**
+ * Adds an existing user (by email) to a company with the given role.
+ * Only ADMIN or OWNER members can invite. The invited person must already
+ * have a RudraBiz account — there's no email-invite flow yet, so if they
+ * don't have one, this returns an error message instead of throwing, so
+ * the calling form can display it inline.
+ */
+export async function inviteUserToCompany(
+  companyId: string,
+  email: string,
+  roleCode: Parameters<typeof getRoleId>[0]
+): Promise<{ error?: string }> {
+  const inviter = await getCurrentUser();
+
+  try {
+    await requireRole(inviter.id, companyId, "ADMIN");
+  } catch (err) {
+    if (err instanceof ForbiddenError) {
+      return { error: err.message };
+    }
+    throw err;
+  }
+
+  const invitedUser = await prisma.user.findUnique({
+    where: { email: email.trim() },
+  });
+
+  if (!invitedUser) {
+    return {
+      error: `No RudraBiz account found for ${email}. They need to register first.`,
+    };
+  }
+
+  const alreadyMember = await prisma.companyUser.findFirst({
+    where: { userId: invitedUser.id, companyId },
+  });
+  if (alreadyMember) {
+    return { error: `${email} is already a member of this company.` };
+  }
+
+  const roleId = await getRoleId(roleCode);
+
+  await prisma.companyUser.create({
+    data: {
+      userId: invitedUser.id,
+      companyId,
+      companyUserRoleId: roleId,
+      invitedById: inviter.id,
+      isDefault: false,
+    },
+  });
+
+  revalidatePath(`/companies`);
+  return {};
 }
 
 function emptyToNull(v: FormDataEntryValue | null): string | null {

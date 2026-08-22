@@ -1,12 +1,5 @@
 import { prisma } from "./prisma";
-
-// NOTE: master_company_user_roles has no seed data yet as of this pass.
-// Once you seed real role codes, update ROLE_RANK below to match them
-// (lower index = lower privilege). This is the single place that encodes
-// role hierarchy — everything else just calls requireRole().
-const ROLE_RANK = ["VIEWER", "STAFF", "ACCOUNTANT", "ADMIN", "OWNER"] as const;
-
-type RoleCode = (typeof ROLE_RANK)[number];
+import { ROLE_RANK, type RoleCode } from "./roles";
 
 export class ForbiddenError extends Error {
   constructor(message = "You do not have permission to perform this action.") {
