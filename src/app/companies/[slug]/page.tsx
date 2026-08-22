@@ -30,10 +30,14 @@ export default async function CompanyDetailPage({
   if (!company) notFound();
 
   const myMembership = company.companyUsers.find((cu) => cu.userId === user.id);
+
+  // Non-members must not see this company's details or member list at all —
+  // treat it the same as a company that doesn't exist.
+  if (!myMembership) notFound();
+
   const canManageMembers =
-    !!myMembership &&
     ROLE_RANK.indexOf(myMembership.role.code as RoleCode) >=
-      ROLE_RANK.indexOf("ADMIN");
+    ROLE_RANK.indexOf("ADMIN");
 
   return (
     <div className="flex min-h-full flex-col">
@@ -48,16 +52,23 @@ export default async function CompanyDetailPage({
               <StatusBadge status={company.companyStatus.name} />
             </div>
             <p className="mt-1 text-sm text-muted">
-              {company.slug}
-              {myMembership && ` · Your role: ${myMembership.role.name}`}
+              {company.slug} · Your role: {myMembership.role.name}
             </p>
           </div>
-          <Link
-            href={`/companies/${company.slug}/edit`}
-            className="rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-background"
-          >
-            Edit
-          </Link>
+          <div className="flex gap-2">
+            <Link
+              href={`/companies/${company.slug}/accounts`}
+              className="rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-background"
+            >
+              Chart of accounts
+            </Link>
+            <Link
+              href={`/companies/${company.slug}/edit`}
+              className="rounded-md border border-border bg-surface px-4 py-2 text-sm font-medium hover:bg-background"
+            >
+              Edit
+            </Link>
+          </div>
         </div>
 
         <div className="mt-8 space-y-6 rounded-lg border border-border bg-surface p-6">

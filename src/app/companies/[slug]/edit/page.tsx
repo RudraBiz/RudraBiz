@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
 import { prisma } from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/session";
+import { requireCompanyRole } from "@/lib/company-access";
 import { TopNav } from "@/components/top-nav";
 import {
   Section,
@@ -16,6 +18,7 @@ export default async function EditCompanyPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
+  const user = await getCurrentUser();
 
   const [company, companyTypes, countries, accountingMethods, taxFreqs] =
     await Promise.all([
@@ -30,6 +33,11 @@ export default async function EditCompanyPage({
     ]);
 
   if (!company) notFound();
+
+  // Only ADMIN+ can view or submit this form — updateCompany/archiveCompany
+  // already enforce this server-side, but a non-admin member (or a
+  // non-member) shouldn't even see the company's editable details.
+  await requireCompanyRole(user.id, company.id, "ADMIN");
 
   const updateWithSlug = updateCompany.bind(null, slug);
   const archiveWithSlug = archiveCompany.bind(null, slug);

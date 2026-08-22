@@ -130,6 +130,7 @@ model Company {
 
   // Relations
   companyUsers CompanyUser[]
+  accounts     Account[]
 
   @@map("companies")
 }
@@ -245,4 +246,57 @@ model CompanyUserRole {
   companyUsers CompanyUser[]
 
   @@map("master_company_user_roles")
+}
+
+model AccountType {
+  id            String  @id @default(uuid())
+  name          String  // e.g. "Asset"
+  code          String  @unique // e.g. "ASSET"
+  normalBalance String  // "DEBIT" or "CREDIT" — which side increases this type
+  sortOrder     Int     @default(0)
+  isActive      Boolean @default(true)
+
+  accounts Account[]
+
+  @@map("master_account_types")
+}
+
+// ============================================================
+// CHART OF ACCOUNTS (per company) — Pass 4
+// ============================================================
+
+model Account {
+  id        String  @id @default(uuid())
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  code String // account number, e.g. "1000" — unique per company
+  name String
+  description String?
+
+  accountTypeId String
+  accountType   AccountType @relation(fields: [accountTypeId], references: [id])
+
+  parentAccountId String?
+  parent          Account?  @relation("AccountHierarchy", fields: [parentAccountId], references: [id])
+  children        Account[] @relation("AccountHierarchy")
+
+  // System accounts (e.g. Retained Earnings) are created automatically
+  // per company and shouldn't be deletable/renamable from the UI.
+  isSystemAccount Boolean @default(false)
+  isActive        Boolean @default(true)
+
+  // Opening balances are recorded as plain fields for now rather than a
+  // journal entry, since journal entries don't exist yet (Pass 5). Once
+  // they do, these may get migrated into an opening-balance journal entry
+  // instead — but that's a later, separate migration.
+  openingBalance     Decimal   @default(0) @db.Decimal(18, 2)
+  openingBalanceAsOf DateTime?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([companyId, code])
+  @@map("accounts")
 }
