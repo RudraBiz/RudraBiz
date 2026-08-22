@@ -31,6 +31,8 @@ model User {
   oauthAccounts    OAuthAccount[]
   sessions         Session[]
   createdJournalEntries JournalEntry[]
+  createdInvoices  Invoice[] @relation("InvoiceCreatedBy")
+  createdPayments  Payment[] @relation("PaymentCreatedBy")
 
   @@map("users")
 }
@@ -140,6 +142,9 @@ model Company {
   companyUsers CompanyUser[]
   accounts     Account[]
   journalEntries JournalEntry[]
+  customers    Customer[]
+  invoices     Invoice[]
+  payments     Payment[]
 
   @@map("companies")
 }
@@ -307,6 +312,8 @@ model Account {
   updatedAt DateTime @updatedAt
 
   journalEntryLines JournalEntryLine[]
+  invoiceLines      InvoiceLine[] @relation("InvoiceLineRevenueAccount")
+  payments          Payment[]     @relation("PaymentDepositAccount")
 
   @@unique([companyId, code])
   @@map("accounts")
@@ -350,6 +357,10 @@ model JournalEntry {
 
   lines JournalEntryLine[]
 
+  invoiceCreatedFrom     Invoice? @relation("InvoiceJournalEntry")
+  invoiceVoidedFrom      Invoice? @relation("InvoiceVoidJournalEntry")
+  paymentCreatedFrom     Payment? @relation("PaymentJournalEntry")
+
   @@unique([companyId, entryNumber])
   @@map("journal_entries")
 }
@@ -372,4 +383,129 @@ model JournalEntryLine {
   lineOrder   Int     @default(0)
 
   @@map("journal_entry_lines")
+}
+
+// ============================================================
+// ACCOUNTS RECEIVABLE (customers, invoices, payments) — Pass 6
+//
+// Invoices are immutable once created, same philosophy as journal
+// entries — no edit. Mistakes are corrected by voiding (which reverses
+// the posting journal entry), not by editing history.
+// ============================================================
+
+model Customer {
+  id String @id @default(uuid())
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  name    String
+  email   String?
+  phone   String?
+  address String?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  invoices Invoice[]
+
+  @@map("customers")
+}
+
+model Invoice {
+  id String @id @default(uuid())
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  // Sequential per company (e.g. "INV-0001") — same generation approach
+  // (and same retry-on-conflict handling) as JournalEntry.entryNumber.
+  invoiceNumber String
+
+  invoiceDate DateTime
+  dueDate     DateTime?
+  notes       String?
+
+  // "SENT" | "PAID" | "VOID". No draft state yet — creating an invoice
+  // immediately posts it (and its journal entry). No tax handling yet
+  // either — subtotal and total are currently always equal.
+  status String @default("SENT")
+
+  subtotal   Decimal @db.Decimal(18, 2)
+  total      Decimal @db.Decimal(18, 2)
+  amountPaid Decimal @default(0) @db.Decimal(18, 2)
+
+  // The journal entry created when this invoice was posted
+  // (Dr Accounts Receivable / Cr Revenue per line).
+  journalEntryId String       @unique
+  journalEntry   JournalEntry @relation("InvoiceJournalEntry", fields: [journalEntryId], references: [id])
+
+  // If voided, the reversing entry that undid the posting above.
+  voidJournalEntryId String?       @unique
+  voidJournalEntry   JournalEntry? @relation("InvoiceVoidJournalEntry", fields: [voidJournalEntryId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("InvoiceCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  lines    InvoiceLine[]
+  payments Payment[]
+
+  @@unique([companyId, invoiceNumber])
+  @@map("invoices")
+}
+
+model InvoiceLine {
+  id String @id @default(uuid())
+
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  description String
+  quantity    Decimal @default(1) @db.Decimal(18, 2)
+  unitPrice   Decimal @db.Decimal(18, 2)
+  lineTotal   Decimal @db.Decimal(18, 2)
+
+  // Which revenue account this line's amount is credited to when posted.
+  revenueAccountId String
+  revenueAccount   Account @relation("InvoiceLineRevenueAccount", fields: [revenueAccountId], references: [id])
+
+  sortOrder Int @default(0)
+
+  @@map("invoice_lines")
+}
+
+model Payment {
+  id String @id @default(uuid())
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  invoiceId String
+  invoice   Invoice @relation(fields: [invoiceId], references: [id])
+
+  amount      Decimal  @db.Decimal(18, 2)
+  paymentDate DateTime
+
+  // Which asset account (cash/bank) the payment lands in.
+  depositToAccountId String
+  depositToAccount   Account @relation("PaymentDepositAccount", fields: [depositToAccountId], references: [id])
+
+  // The journal entry created for this payment
+  // (Dr deposit account / Cr Accounts Receivable).
+  journalEntryId String       @unique
+  journalEntry   JournalEntry @relation("PaymentJournalEntry", fields: [journalEntryId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("PaymentCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@map("payments")
 }
