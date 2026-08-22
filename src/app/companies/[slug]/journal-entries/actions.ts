@@ -1,6 +1,7 @@
 "use server";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/session";
 import { requireRole } from "@/lib/permissions";
@@ -11,18 +12,39 @@ async function getCompanyOrThrow(slug: string) {
   return company;
 }
 
-/**
- * Generates the next sequential entry number for a company, e.g. "JE-0001".
- * NOTE: this counts existing entries and adds one — under concurrent
- * submissions for the same company, two requests could race and produce
- * the same number, which would then fail on the (companyId, entryNumber)
- * unique constraint. Acceptable for now (low-traffic, single-accountant
- * usage), but if multiple people post entries for the same company
- * simultaneously, retry-on-conflict or a DB sequence would be more robust.
- */
 async function nextEntryNumber(companyId: string): Promise<string> {
   const count = await prisma.journalEntry.count({ where: { companyId } });
   return `JE-${String(count + 1).padStart(4, "0")}`;
+}
+
+/**
+ * Creates a journal entry, retrying with a fresh entry number if a
+ * concurrent request already took the one we generated. nextEntryNumber()
+ * is count-based (not a DB sequence), so two simultaneous submissions for
+ * the same company can briefly compute the same number — the unique
+ * (companyId, entryNumber) constraint catches that, and we just retry
+ * with the next count rather than surfacing an error to the user.
+ */
+async function createEntryWithRetry(
+  companyId: string,
+  buildData: (entryNumber: string) => Prisma.JournalEntryCreateArgs["data"],
+  maxAttempts = 5
+) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const entryNumber = await nextEntryNumber(companyId);
+    try {
+      return await prisma.journalEntry.create({ data: buildData(entryNumber) });
+    } catch (err) {
+      const isUniqueConflict =
+        err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
+      if (!isUniqueConflict || attempt === maxAttempts - 1) {
+        throw err;
+      }
+      // fall through and retry with a freshly counted number
+    }
+  }
+  // Unreachable, but keeps TypeScript happy about the return type.
+  throw new Error("Failed to generate a unique entry number after retries.");
 }
 
 type ParsedLine = {
@@ -136,27 +158,23 @@ export async function createJournalEntry(companySlug: string, formData: FormData
   const lines = parseLines(formData);
   await validateLines(company.id, lines);
 
-  const entryNumber = await nextEntryNumber(company.id);
-
-  const entry = await prisma.journalEntry.create({
-    data: {
-      companyId: company.id,
-      entryNumber,
-      entryDate: new Date(entryDateRaw),
-      description,
-      reference,
-      createdById: user.id,
-      lines: {
-        create: lines.map((line, idx) => ({
-          accountId: line.accountId,
-          debit: line.debit,
-          credit: line.credit,
-          description: line.description,
-          lineOrder: idx,
-        })),
-      },
+  const entry = await createEntryWithRetry(company.id, (entryNumber) => ({
+    companyId: company.id,
+    entryNumber,
+    entryDate: new Date(entryDateRaw),
+    description,
+    reference,
+    createdById: user.id,
+    lines: {
+      create: lines.map((line, idx) => ({
+        accountId: line.accountId,
+        debit: line.debit,
+        credit: line.credit,
+        description: line.description,
+        lineOrder: idx,
+      })),
     },
-  });
+  }));
 
   revalidatePath(`/companies/${companySlug}/journal-entries`);
   redirect(`/companies/${companySlug}/journal-entries/${entry.id}`);
@@ -184,29 +202,25 @@ export async function reverseJournalEntry(companySlug: string, entryId: string) 
     throw new Error("This entry has already been reversed.");
   }
 
-  const entryNumber = await nextEntryNumber(company.id);
-
-  const reversal = await prisma.journalEntry.create({
-    data: {
-      companyId: company.id,
-      entryNumber,
-      entryDate: new Date(),
-      description: `Reversal of ${original.entryNumber}`,
-      reference: original.reference,
-      createdById: user.id,
-      reversedEntryId: original.id,
-      lines: {
-        create: original.lines.map((line) => ({
-          accountId: line.accountId,
-          // swapped — this is what makes it a reversal
-          debit: line.credit,
-          credit: line.debit,
-          description: line.description,
-          lineOrder: line.lineOrder,
-        })),
-      },
+  const reversal = await createEntryWithRetry(company.id, (entryNumber) => ({
+    companyId: company.id,
+    entryNumber,
+    entryDate: new Date(),
+    description: `Reversal of ${original.entryNumber}`,
+    reference: original.reference,
+    createdById: user.id,
+    reversedEntryId: original.id,
+    lines: {
+      create: original.lines.map((line) => ({
+        accountId: line.accountId,
+        // swapped — this is what makes it a reversal
+        debit: line.credit,
+        credit: line.debit,
+        description: line.description,
+        lineOrder: line.lineOrder,
+      })),
     },
-  });
+  }));
 
   revalidatePath(`/companies/${companySlug}/journal-entries`);
   redirect(`/companies/${companySlug}/journal-entries/${reversal.id}`);
