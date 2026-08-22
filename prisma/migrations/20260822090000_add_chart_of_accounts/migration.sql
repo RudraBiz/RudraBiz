@@ -26,7 +26,7 @@ CREATE TABLE "accounts" (
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
     "updatedAt" TIMESTAMP(3) NOT NULL,
 
-    CONSTRAINT "accounts_pkey" PRIMARY KEY ("id")
+    CONSTRAINT "chart_accounts_pkey" PRIMARY KEY ("id")
 );
 
 -- CreateIndex
