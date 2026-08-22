@@ -33,6 +33,8 @@ model User {
   createdJournalEntries JournalEntry[]
   createdInvoices  Invoice[] @relation("InvoiceCreatedBy")
   createdPayments  Payment[] @relation("PaymentCreatedBy")
+  createdBills     Bill[] @relation("BillCreatedBy")
+  createdBillPayments BillPayment[] @relation("BillPaymentCreatedBy")
 
   @@map("users")
 }
@@ -145,6 +147,9 @@ model Company {
   customers    Customer[]
   invoices     Invoice[]
   payments     Payment[]
+  vendors      Vendor[]
+  bills        Bill[]
+  billPayments BillPayment[]
 
   @@map("companies")
 }
@@ -314,6 +319,8 @@ model Account {
   journalEntryLines JournalEntryLine[]
   invoiceLines      InvoiceLine[] @relation("InvoiceLineRevenueAccount")
   payments          Payment[]     @relation("PaymentDepositAccount")
+  billLines         BillLine[]    @relation("BillLineExpenseAccount")
+  billPayments      BillPayment[] @relation("BillPaymentFromAccount")
 
   @@unique([companyId, code])
   @@map("accounts")
@@ -360,6 +367,9 @@ model JournalEntry {
   invoiceCreatedFrom     Invoice? @relation("InvoiceJournalEntry")
   invoiceVoidedFrom      Invoice? @relation("InvoiceVoidJournalEntry")
   paymentCreatedFrom     Payment? @relation("PaymentJournalEntry")
+  billCreatedFrom        Bill? @relation("BillJournalEntry")
+  billVoidedFrom         Bill? @relation("BillVoidJournalEntry")
+  billPaymentCreatedFrom BillPayment? @relation("BillPaymentJournalEntry")
 
   @@unique([companyId, entryNumber])
   @@map("journal_entries")
@@ -508,4 +518,128 @@ model Payment {
   createdAt DateTime @default(now())
 
   @@map("payments")
+}
+
+// ============================================================
+// ACCOUNTS PAYABLE (vendors, bills, bill payments) — Pass 7
+//
+// Mirrors the Accounts Receivable structure from Pass 6: bills are
+// immutable once created (void + reversing entry, not edit), same as
+// invoices and journal entries.
+// ============================================================
+
+model Vendor {
+  id String @id @default(uuid())
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  name    String
+  email   String?
+  phone   String?
+  address String?
+
+  isActive Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bills Bill[]
+
+  @@map("vendors")
+}
+
+model Bill {
+  id String @id @default(uuid())
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  vendorId String
+  vendor   Vendor @relation(fields: [vendorId], references: [id])
+
+  // Sequential per company (e.g. "BILL-0001").
+  billNumber String
+
+  billDate DateTime
+  dueDate  DateTime?
+  notes    String?
+
+  // "OPEN" | "PAID" | "VOID". No draft state — creating a bill
+  // immediately posts it, same as invoices.
+  status String @default("OPEN")
+
+  subtotal   Decimal @db.Decimal(18, 2)
+  total      Decimal @db.Decimal(18, 2)
+  amountPaid Decimal @default(0) @db.Decimal(18, 2)
+
+  // The journal entry created when this bill was posted
+  // (Dr each line's expense account / Cr Accounts Payable).
+  journalEntryId String       @unique
+  journalEntry   JournalEntry @relation("BillJournalEntry", fields: [journalEntryId], references: [id])
+
+  // If voided, the reversing entry that undid the posting above.
+  voidJournalEntryId String?       @unique
+  voidJournalEntry   JournalEntry? @relation("BillVoidJournalEntry", fields: [voidJournalEntryId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("BillCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  lines    BillLine[]
+  payments BillPayment[]
+
+  @@unique([companyId, billNumber])
+  @@map("bills")
+}
+
+model BillLine {
+  id String @id @default(uuid())
+
+  billId String
+  bill   Bill @relation(fields: [billId], references: [id], onDelete: Cascade)
+
+  description String
+  quantity    Decimal @default(1) @db.Decimal(18, 2)
+  unitPrice   Decimal @db.Decimal(18, 2)
+  lineTotal   Decimal @db.Decimal(18, 2)
+
+  // Which account (typically an expense account) this line's amount is
+  // debited to when posted.
+  expenseAccountId String
+  expenseAccount   Account @relation("BillLineExpenseAccount", fields: [expenseAccountId], references: [id])
+
+  sortOrder Int @default(0)
+
+  @@map("bill_lines")
+}
+
+model BillPayment {
+  id String @id @default(uuid())
+
+  companyId String
+  company   Company @relation(fields: [companyId], references: [id])
+
+  billId String
+  bill   Bill @relation(fields: [billId], references: [id])
+
+  amount      Decimal  @db.Decimal(18, 2)
+  paymentDate DateTime
+
+  // Which asset account (cash/bank) the payment is paid from.
+  paidFromAccountId String
+  paidFromAccount   Account @relation("BillPaymentFromAccount", fields: [paidFromAccountId], references: [id])
+
+  // The journal entry created for this payment
+  // (Dr Accounts Payable / Cr paidFromAccount).
+  journalEntryId String       @unique
+  journalEntry   JournalEntry @relation("BillPaymentJournalEntry", fields: [journalEntryId], references: [id])
+
+  createdById String
+  createdBy   User   @relation("BillPaymentCreatedBy", fields: [createdById], references: [id])
+
+  createdAt DateTime @default(now())
+
+  @@map("bill_payments")
 }
